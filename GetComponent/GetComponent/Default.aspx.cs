@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Web;
 using System.Web.UI;
 using System.Web.UI.WebControls;
@@ -15,10 +16,12 @@ namespace GetComponent
     {
         #region Data Member
         public static List<UserDetails> users = new List<UserDetails>();
+        public static List<PublicationDetails> publications = new List<PublicationDetails>();
         public static string selectedUser = null;
+        public static string selectedPublication = null;
         public static CoreServiceClient client = new CoreServiceClient();
-        public static List<ComponentDetails> components = new List<ComponentDetails>();
-        public static List<ComponentListBasedOnUser> componentListBasedOnUser = new List<ComponentListBasedOnUser>();
+        public static List<ItemDetails> items = new List<ItemDetails>();
+        public static List<ItemListBasedOnUser> itemListBasedOnUser = new List<ItemListBasedOnUser>();
         #endregion
 
         /// <summary>
@@ -26,7 +29,7 @@ namespace GetComponent
         /// </summary>
         /// <param name="sender"></param>
         /// <param name="e"></param>
-        protected void Page_Load(object sender, EventArgs e)
+        private void Page_Load(object sender, EventArgs e)
         {
             LabelMessage.Text = "";
             if (!IsPostBack)
@@ -34,15 +37,28 @@ namespace GetComponent
                 client = Utility.CoreServiceSource;
                 var filter = new UsersFilterData();
                 IdentifiableObjectData[] UserList = client.GetSystemWideList(filter);
-                PopulateDropDownList(UserList);
+                var filter1 = new PublicationsFilterData();
+                IdentifiableObjectData[] PublicationList = client.GetSystemWideList(filter1);
+                PopulateDropDownListUser(UserList);
+                PopulateDropDownListPublication(PublicationList);
             }
 
         }
+        
 
         #region Protected Method
+        /// <summary>
+        /// Selected Index changed method for Publication dropdown list
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="e"></param>
+        protected void publicationList_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            selectedPublication = publicationddList.SelectedItem.Value;
+        }
 
         /// <summary>
-        /// Selected Index changed method for dropdown list
+        /// Selected Index changed method for User dropdown list
         /// </summary>
         /// <param name="sender"></param>
         /// <param name="e"></param>
@@ -58,14 +74,18 @@ namespace GetComponent
         /// <param name="e"></param>
         protected void DownloadComponentList_Click(object sender, EventArgs e)
         {
-            if (selectedUser != null)
+            if (selectedUser != null && selectedPublication != null)
             {
                 if (selectedUser != "All Users")
                 {
                     string tcmId = (from user in users where user.Description == selectedUser.ToString() select user.UserId).FirstOrDefault().ToString();
-                    SearchQueryData filter = new SearchQueryData();
+                    string pubtcmId = (from pub in publications where pub.PublicationName == selectedPublication.ToString() select pub.PublicationId).FirstOrDefault().ToString();
+
+                    SearchQueryData filter = new SearchQueryData();        
                     filter.Author = new LinkToUserData() { IdRef = tcmId };
-                    filter.ItemTypes = new[] { ItemType.Component };
+                    filter.ItemTypes = new[] { ItemType.Component,ItemType.Page };
+                    filter.SearchIn = new LinkToIdentifiableObjectData() { IdRef = pubtcmId };
+                    filter.IncludeLocationInfoColumns = true;
                     XElement result = client.GetSearchResultsXml(filter);
                     if (result.FirstNode != null)
                     {
@@ -78,20 +98,34 @@ namespace GetComponent
                 }
                 else
                 {
+                    string pubtcmId = (from pub in publications where pub.PublicationName == selectedPublication.ToString() select pub.PublicationId).FirstOrDefault().ToString();
+
                     foreach (var user in users)
                     {
                         SearchQueryData filter = new SearchQueryData();
                         filter.Author = new LinkToUserData() { IdRef = user.UserId };
-                        filter.ItemTypes = new[] { ItemType.Component };
+                        filter.ItemTypes = new[] { ItemType.Component,ItemType.Page };
+                        filter.SearchIn = new LinkToIdentifiableObjectData() { IdRef = pubtcmId };
+                        filter.IncludeLocationInfoColumns = true;
                         XElement result = client.GetSearchResultsXml(filter);
                         if (result.FirstNode != null)
                         {
                             ParseResultList(result, user.Description);
                         }
                     }
-                    ExportCSVFileFromList(componentListBasedOnUser);
+                    ExportCSVFileFromList(itemListBasedOnUser);
                 }
-
+            }
+            else
+            {
+                if (selectedUser == null)
+                {
+                    LabelMessage.Text = "Please select the User from dropdownlist";
+                }
+                else
+                {
+                    LabelMessage.Text = "Please select the Publication from dropdownlist";
+                }
             }
 
         }
@@ -99,12 +133,34 @@ namespace GetComponent
         #endregion
 
         #region Private Method
+        
+        /// <summary>
+        /// Populate the dropdownlist on page load
+        /// </summary>
+        /// <param name="publicationList"></param>
+        private void PopulateDropDownListPublication(IdentifiableObjectData[] publicationList)
+        {
+            List<string> publicationName = new List<string>();
+            foreach (var item in publicationList)
+            {
+               
+                    PublicationDetails pub = new PublicationDetails();
+                    pub.PublicationId = item.Id;
+                    pub.PublicationName = item.Title;
+                    publications.Add(pub);
+            }
+            publicationName = (from publication in publications select publication.PublicationName).ToList();
+            publicationddList.DataSource = publicationName;
+            publicationddList.DataBind();
+            publicationddList.Items.Insert(0, new ListItem("--select Publication--", ""));
+        }
+
 
         /// <summary>
         /// Populate the dropdownlist on page load
         /// </summary>
         /// <param name="userList"></param>
-        private void PopulateDropDownList(IdentifiableObjectData[] userList)
+        private void PopulateDropDownListUser(IdentifiableObjectData[] userList)
         {
             List<string> userName = new List<string>();
             foreach (var item in userList)
@@ -132,20 +188,21 @@ namespace GetComponent
         /// <param name="UserName"></param>
         private void ParseResultList(XElement result, string UserName)
         {
-            ComponentListBasedOnUser _ComponentListBasedOnUser = new ComponentListBasedOnUser();
+            string pubtcmId = (from pub in publications where pub.PublicationName == selectedPublication.ToString() select pub.PublicationId).FirstOrDefault().ToString();
+            ItemListBasedOnUser _ItemListBasedOnUser = new ItemListBasedOnUser();
             foreach (var item in result.Elements())
             {
-                var componentData = client.Read(item.Attribute("ID").Value, null) as ComponentData;
-                ComponentDetails comDetail = new ComponentDetails();
-                comDetail.ComponentId = componentData.Id;
-                comDetail.ComponentLocation = componentData.LocationInfo.Path;
-                comDetail.ComponentTitle = componentData.Title;
-                _ComponentListBasedOnUser.ComponentList.Add(comDetail);
-                
+                    ItemDetails itemDetail = new ItemDetails();
+                    itemDetail.ItemId = item.Attribute("ID").Value;
+                    itemDetail.ItemLocation = item.Attribute("Path").Value.ToString();
+                    itemDetail.ItemType = ((item.Attribute("Type").Value == "16") ? "Component" : "Page");
+                    itemDetail.ItemTitle = item.Attribute("Title").Value;
+                    _ItemListBasedOnUser.ComponentList.Add(itemDetail);
+
             }
 
-            _ComponentListBasedOnUser.User = UserName;
-            componentListBasedOnUser.Add(_ComponentListBasedOnUser);
+            _ItemListBasedOnUser.User = UserName;
+            itemListBasedOnUser.Add(_ItemListBasedOnUser);
         }
 
         /// <summary>
@@ -154,23 +211,40 @@ namespace GetComponent
         /// <param name="result"></param>
         private void ParseResult(XElement result)
         {
+
+            string pubtcmId = (from pub in publications where pub.PublicationName == selectedPublication.ToString() select pub.PublicationId).FirstOrDefault().ToString();
+            
             foreach (var item in result.Elements())
             {
-                var componentData = client.Read(item.Attribute("ID").Value, null) as ComponentData;
-                ComponentDetails comDetail = new ComponentDetails();
-                comDetail.ComponentId = componentData.Id;
-                comDetail.ComponentLocation = componentData.LocationInfo.Path;
-                comDetail.ComponentTitle = componentData.Title;
-                components.Add(comDetail);
+                    ItemDetails itemDetail = new ItemDetails();
+                    itemDetail.ItemId = item.Attribute("ID").Value;
+                    itemDetail.ItemLocation = String.Format(item.Attribute("Path").Value.ToString(), Encoding.Default);
+                    itemDetail.ItemType = ((item.Attribute("Type").Value == "16")? "Component" : "Page");
+                    itemDetail.ItemTitle = item.Attribute("Title").Value;
+                    items.Add(itemDetail);
+
             }
-            ExportCSVFile(components);
+            ExportCSVFile(items);
+        }
+
+        private bool PublicationMatch(string pubtcmId, string xAttributeValue)
+        {
+            Match match1 = Regex.Match(xAttributeValue, @"tcm:(\d*)-*");
+            string key1 = match1.Groups[1].Value;
+            Match match2 = Regex.Match(pubtcmId, @"tcm:\d*-(\d*)-*");
+            string key2 = match2.Groups[1].Value;
+            if(match1.Groups[1].Value == match2.Groups[1].Value)
+            {
+                return true;
+            }
+            return false;
         }
 
         /// <summary>
         /// Write the list of items into CSV file for all user
         /// </summary>
         /// <param name="componentListBasedOnUser"></param>
-        private void ExportCSVFileFromList(List<ComponentListBasedOnUser> componentListBasedOnUser)
+        private void ExportCSVFileFromList(List<ItemListBasedOnUser> itemListBasedOnUser)
         {
             Response.Clear();
             Response.Buffer = true;
@@ -179,14 +253,14 @@ namespace GetComponent
             Response.Charset = "";
             Response.ContentType = "application/text";
             string strValue = string.Empty;
-            foreach (var item in componentListBasedOnUser)
+            foreach (var item in itemListBasedOnUser)
             {
                 string strBody = null;
                 string strUser = "Components Created By : " + item.User + Environment.NewLine;
-                string strHeader = String.Format("{0},{1},{2}" + Environment.NewLine, "Component ID", "Component Title", "Component Location");
+                string strHeader = String.Format("{0},{1},{2},{3}" + Environment.NewLine, "Item ID", "Item Title", "Item Type", "Item Location");
                 foreach (var subitem in item.ComponentList)
                 {
-                    strBody = strBody + (String.Format("{0},{1},{2}" + Environment.NewLine, subitem.ComponentId, subitem.ComponentTitle, subitem.ComponentLocation));
+                    strBody = strBody + (String.Format("{0},{1},{2},{3}" + Environment.NewLine, subitem.ItemId, subitem.ItemTitle, subitem.ItemType, subitem.ItemLocation));
                 }
                 strValue = strValue + strUser + strHeader + strBody + Environment.NewLine;
             }
@@ -199,7 +273,7 @@ namespace GetComponent
         /// Write the list of items into CSV file for individual user
         /// </summary>
         /// <param name="components"></param>
-        private void ExportCSVFile(List<ComponentDetails> components)
+        private void ExportCSVFile(List<ItemDetails> items)
         {
             Response.Clear();
             Response.Buffer = true;
@@ -210,10 +284,10 @@ namespace GetComponent
             string strValue = string.Empty;
             string strBody = null;
             string strUser = "Components Created By : " + selectedUser + Environment.NewLine;
-            string strHeader = String.Format("{0},{1},{2}" + Environment.NewLine, "Component ID", "Component Title", "Component Location");
-            foreach (var item in components)
+            string strHeader = String.Format("{0},{1},{2},{3}" + Environment.NewLine, "Item ID", "Item Title", "Item Type", "Item Location");
+            foreach (var item in items)
             {
-                strBody = strBody + (String.Format("{0},{1},{2}" + Environment.NewLine, item.ComponentId, item.ComponentTitle, item.ComponentLocation));
+                strBody = strBody + (String.Format("{0},{1},{2},{3}" + Environment.NewLine, item.ItemId, item.ItemTitle, item.ItemType, item.ItemLocation));
                 
             }
             strValue = strUser + strHeader + strBody;
@@ -224,5 +298,7 @@ namespace GetComponent
         }
 
         #endregion
+
+        
     }
 }

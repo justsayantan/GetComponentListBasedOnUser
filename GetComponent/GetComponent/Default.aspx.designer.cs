@@ -22,6 +22,15 @@ namespace GetComponent {
         protected global::System.Web.UI.WebControls.DropDownList userddList;
         
         /// <summary>
+        /// publicationddList control.
+        /// </summary>
+        /// <remarks>
+        /// Auto-generated field.
+        /// To modify move field declaration from designer file to code-behind file.
+        /// </remarks>
+        protected global::System.Web.UI.WebControls.DropDownList publicationddList;
+        
+        /// <summary>
         /// DownloadComponentList control.
         /// </summary>
         /// <remarks>
